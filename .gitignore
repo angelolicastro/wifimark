@@ -1,0 +1,7 @@
+config.pyc
+
+# wifimark database file
+.wifimark.database
+
+# wifimark log file
+.wifimark.log

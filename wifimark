@@ -1,0 +1,154 @@
+#!/usr/bin/env python
+
+"""
+wifimark
+Copyright (c) 2016 Angelo Licastro
+See LICENSE and README.md.
+"""
+
+from sys import exit
+
+try:
+	from config import databaseFilePath
+	from config import logFilePath
+
+except ImportError as e:
+	print('The config file may be missing.')
+
+	exit(1)
+
+except SyntaxError as e:
+	print('The config file may be malformed.')
+
+	exit(1)
+
+try:
+	from Foundation import NSUserNotification
+	from Foundation import NSUserNotificationCenter
+
+except ImportError as e:
+	print('Foundation is a required dependency.')
+	print('1. You may not be using Mac OS X.')
+	print('2. Your version of Python may not be configured correctly.')
+
+	exit(1)
+
+from json import dumps
+from json import loads
+
+from re import search
+
+from subprocess import check_output
+from subprocess import CalledProcessError
+
+from time import sleep
+
+GET_CURRENT_WIRELESS_STATUS_COMMAND = '/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I'
+
+GET_GATEWAY_NAME_HOST = 'www.google.com'
+
+TRACEROUTE_FILE_PATH  = '/usr/sbin/traceroute'
+
+def log(text):
+	"""Writes text to the log file."""
+	with open(logFilePath, 'a') as f:
+		f.write(text)
+
+def getCurrentWirelessStatus():
+	"""Returns the BSSID, SSID, and channel number of the current wireless
+	network.
+	"""
+	try:
+		output = check_output(GET_CURRENT_WIRELESS_STATUS_COMMAND, shell=True) \
+			.decode('utf-8').strip()
+
+	except CalledProcessError as e:
+		log('Something went wrong:')
+		log(e)
+
+	try:
+		return (search('BSSID: .+', output).group(0).split()[1], \
+				search(' SSID: .+', output).group(0).split()[1], \
+				search('channel: .+', output).group(0).split()[1])
+
+	except AttributeError as e:
+		log('Something went wrong:')
+		log(e)
+		log('You may not be connected to a Wi-Fi network.')
+
+def getGatewayName():
+	"""Returns the gateway name of the current wireless network."""
+	getGatewayNameCommand = '{0} {1}'.format(TRACEROUTE_FILE_PATH, \
+		GET_GATEWAY_NAME_HOST)
+
+	try:
+		output = check_output(getGatewayNameCommand, shell=True).decode('utf-8') \
+			.strip()
+
+	except CalledProcessError as e:
+		log('Something went wrong:')
+		log(e)
+
+	try:
+		output = output.split('\n')[0].split()[1]
+		return output
+
+	except Exception as e:
+		log('Something went wrong:')
+		log(e)
+		log('traceroute may have timed out.')
+
+def getDatabaseContents():
+	"""Returns the contents of the database."""
+	with open(databaseFilePath, 'r') as f:
+		contents = f.read()
+
+	contents = loads(contents)
+
+	return contents
+
+def notify(text):
+	"""Displays a Mac OS X notification banner."""
+	notificationCenter = NSUserNotificationCenter.defaultUserNotificationCenter()
+
+	notification = NSUserNotification.alloc().init()
+
+	notification.setTitle_('{0}'.format('Wi-Fi Mark'))
+	notification.setInformativeText_('{0}'.format(text))
+
+	notificationCenter.deliverNotification_(notification)
+
+def setDatabaseContents(contents):
+	"""Sets the contents of the database."""
+	contents = dumps(contents)
+
+	with open(databaseFilePath, 'w') as f:
+		f.write(contents)
+
+def main():
+	bssid, ssid, channel = getCurrentWirelessStatus()
+
+	gatewayName = getGatewayName()
+
+	database = getDatabaseContents()
+
+	if ssid in database:
+		if database[ssid] != [bssid, ssid, channel, gatewayName]:
+			database[ssid] = [bssid, ssid, channel, gatewayName]
+
+			notify('Warning: You may be connected to a rogue network ({0}).' \
+				.format(ssid))
+			sleep(3)
+			notify('The SSID of this network is known, but the fingerprint of it is not. Proceed with caution.')
+
+	else:
+		database[ssid] = [bssid, ssid, channel, gatewayName]
+
+		notify('You are connected to an unknown network ({0}).'.format(ssid))
+		sleep(3)
+		notify('{0} has been added to the known network database.'.format(ssid))
+
+	setDatabaseContents(database)
+
+if __name__ == '__main__':
+	main()
